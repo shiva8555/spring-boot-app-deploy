@@ -1,0 +1,213 @@
+AWSTemplateFormatVersion: 2010-09-09
+Resources:
+  MasterSG:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: Kubernetes Master Security Group with relavant ports
+      VpcId: vpc-71eda90b
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: "6443"
+          ToPort: "6443"
+          CidrIp: 0.0.0.0/0
+          Description: Kubernetes API Server Port range
+        - IpProtocol: tcp
+          FromPort: "10250"
+          ToPort: "10250"
+          CidrIp: 0.0.0.0/0
+          Description: Kubelet API  Port
+        - IpProtocol: tcp
+          FromPort: "10251"
+          ToPort: "10251"
+          CidrIp: 0.0.0.0/0
+          Description: Kube-Scheduler Port
+        - IpProtocol: tcp
+          FromPort: "10252"
+          ToPort: "10252"
+          CidrIp: 0.0.0.0/0
+          Description: Kube-Controller-manager Port
+        - IpProtocol: tcp
+          FromPort: "10255"
+          ToPort: "10255"
+          CidrIp: 0.0.0.0/0
+          Description: Read-Only Kubelet API Port
+        - IpProtocol: tcp
+          FromPort: "2379"
+          ToPort: "2380"
+          CidrIp: 0.0.0.0/0
+          Description: etcd server client API Port
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+  WorkerSG:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: Kubernetes Worker-SecurityGroup with relavant ports
+      VpcId: vpc-71eda90b
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: "30000"
+          ToPort: "32767"
+          CidrIp: 0.0.0.0/0
+          Description: Kubernetes Node Port range
+        - IpProtocol: tcp
+          FromPort: "10250"
+          ToPort: "10250"
+          CidrIp: 0.0.0.0/0
+          Description: Kubelet API  Port
+        - IpProtocol: tcp
+          FromPort: "10255"
+          ToPort: "10255"
+          CidrIp: 0.0.0.0/0
+          Description: Read-Only Kubelet API Port
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+  INSTANCE1:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      SubnetId: subnet-fae01bb7
+      ImageId: ami-03d315ad33b9d49c4
+      InstanceType: t2.large
+      KeyName: K8s
+      SecurityGroupIds:
+        - !GetAtt MasterSG.GroupId
+      IamInstanceProfile: Ec2-Fullaccess
+      DisableApiTermination: false
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeType: gp2
+            DeleteOnTermination: "true"
+            VolumeSize: "10"
+      Tags:
+        - Key: Name
+          Value: Kubernetes-Master
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          apt-get update -y
+          apt-get install -y apt-transport-https
+          sudo sh -c 'echo Kubernetes-Master > /etc/hostname'
+          curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add
+          cat <<EOF >/etc/apt/sources.list.d/kubernetes.list
+          deb https://apt.kubernetes.io/ kubernetes-xenial main
+          EOF
+          apt-get update -y
+          #Turn off Swap space
+          swapoff -a
+          sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+          #Install and enable Docker
+          apt install docker.io -y
+          systemctl restart docker
+          systemctl enable docker.service
+          #Install kubeadm, kubelet and kubectl
+          apt-get install -y kubelet kubeadm kubectl kubernetes-cni
+          #Enable and start kubelet service
+          systemctl daemon-reload
+          systemctl start kubelet
+          systemctl enable kubelet.service
+          kubeadm init
+          mkdir -p $HOME/.kube && sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config;
+          sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config && sudo chown $(id -u):$(id -g) $HOME/.kube/config;
+          kubectl apply -f "https://cloud.weave.works/k8s/net?k8s-version=$(kubectl version | base64 | tr -d '\n')";
+  INSTANCE2:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      SubnetId: subnet-fae01bb7
+      ImageId: ami-03d315ad33b9d49c4
+      InstanceType: t2.micro
+      KeyName: K8s
+      SecurityGroupIds:
+        - !GetAtt WorkerSG.GroupId
+      DisableApiTermination: false
+      IamInstanceProfile: Ec2-Fullaccess
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeType: gp2
+            DeleteOnTermination: "true"
+            VolumeSize: "10"
+      Tags:
+        - Key: Name
+          Value: Worker-Node1
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          apt-get update -y
+          apt-get install -y apt-transport-https
+          sudo sh -c 'echo Worker-Node1 > /etc/hostname'
+          curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add
+          cat <<EOF >/etc/apt/sources.list.d/kubernetes.list
+          deb https://apt.kubernetes.io/ kubernetes-xenial main
+          EOF
+          apt-get update -y
+          #Turn off Swap space
+          swapoff -a
+          sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+          #Install and enable Docker
+          apt install docker.io -y
+          systemctl restart docker
+          systemctl enable docker.service
+          #Install kubeadm, kubelet and kubectl
+          apt-get install -y kubelet kubeadm kubectl kubernetes-cni
+          #Enable and start kubelet service
+          systemctl daemon-reload
+          systemctl start kubelet
+          systemctl enable
+          echo "Worker-Node1"  >> /etc/hostname
+  INSTANCE3:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      SubnetId: subnet-fae01bb7
+      ImageId: ami-03d315ad33b9d49c4
+      InstanceType: t2.micro
+      KeyName: K8s
+      DisableApiTermination: false
+      IamInstanceProfile: Ec2-Fullaccess
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeType: gp2
+            DeleteOnTermination: "true"
+            VolumeSize: "10"
+      SecurityGroupIds:
+        - !GetAtt WorkerSG.GroupId
+      Tags:
+        - Key: Name
+          Value: Worker-Node2
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          apt-get update -y
+          apt-get install -y apt-transport-https
+          sudo sh -c 'echo Worker-Node2 > /etc/hostname'
+          curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add
+          cat <<EOF >/etc/apt/sources.list.d/kubernetes.list
+          deb https://apt.kubernetes.io/ kubernetes-xenial main
+          EOF
+          apt-get update -y
+          #Turn off Swap space
+          swapoff -a
+          sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+          #Install and enable Docker
+          apt install docker.io -y
+          systemctl restart docker
+          systemctl enable docker.service
+          #Install kubeadm, kubelet and kubectl
+          apt-get install -y kubelet kubeadm kubectl kubernetes-cni
+          #Enable and start kubelet service
+          systemctl daemon-reload
+          systemctl start kubelet
+          systemctl enable kubelet.service
+Outputs:
+  InstanceSecurityGroup:
+    Description: Security group ec2
+    Value:
+      "Fn::GetAtt":
+        - MasterSG
+        - GroupId
